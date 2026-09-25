@@ -1,15 +1,31 @@
 # web_server.py
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 import uvicorn
-import subprocess
 import os
-import signal
+import time
+import numpy as np
+import sounddevice as sd
+import torch
+from speechbrain.inference.speaker import EncoderClassifier
 
 import config
+from dsp_utils import trim_silence_energy, unit_normalize, extract_mel_spectrogram
 
 app = FastAPI(title="Auditory SOS Sentinel Control Center")
+
+# Lazy-loaded encoder to avoid slow startup
+encoder_model = None
+
+def get_encoder():
+    global encoder_model
+    if encoder_model is None:
+        encoder_model = EncoderClassifier.from_hparams(
+            source=config.EMBEDDING_MODEL_SOURCE,
+            savedir=config.EMBEDDING_SAVEDIR,
+            run_opts={"device": "cpu"}
+        )
+    return encoder_model
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -63,7 +79,7 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
                 <div class="flex gap-3 pt-2">
-                    <button onclick="triggerEnrollment()" class="flex-1 bg-blue-600 hover:bg-blue-500 py-2.5 rounded-xl font-medium text-sm transition flex items-center justify-center gap-2">
+                    <button onclick="startWebEnrollment()" class="flex-1 bg-blue-600 hover:bg-blue-500 py-2.5 rounded-xl font-medium text-sm transition flex items-center justify-center gap-2">
                         <i class="fa-solid fa-microphone"></i> Re-Enroll Voice
                     </button>
                     <button onclick="deleteProfile()" class="bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 px-4 py-2.5 rounded-xl font-medium text-sm transition">
@@ -104,25 +120,47 @@ HTML_TEMPLATE = """
                 </div>
             </div>
 
-            <!-- Contacts List -->
-            <div id="contacts-container" class="space-y-3">
-                <!-- Dynamically Populated -->
-            </div>
+            <div id="contacts-container" class="space-y-3"></div>
 
-            <!-- Add Contact Form -->
             <div class="pt-4 border-t border-slate-700/50 flex flex-col md:flex-row gap-3">
-                <input id="new-name" type="text" placeholder="Contact Name (e.g., Mom / Roommate)" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500">
-                <input id="new-chat-id" type="text" placeholder="Telegram Chat ID (from @userinfobot)" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500">
+                <input id="new-name" type="text" placeholder="Contact Name (e.g., Mom / Ankit)" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500">
+                <input id="new-chat-id" type="text" placeholder="Telegram Chat ID" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500">
                 <button onclick="addContact()" class="bg-emerald-600 hover:bg-emerald-500 px-6 py-2.5 rounded-xl font-medium text-sm transition flex items-center justify-center gap-2">
                     <i class="fa-solid fa-plus"></i> Add
                 </button>
             </div>
         </div>
 
-        <!-- Save Button -->
         <div class="flex justify-end">
             <button onclick="saveAllSettings()" class="bg-blue-600 hover:bg-blue-500 px-8 py-3 rounded-xl font-semibold text-sm shadow-lg shadow-blue-500/20 transition">
                 Save & Apply Settings
+            </button>
+        </div>
+    </div>
+
+    <!-- Interactive Enrollment Modal -->
+    <div id="enroll-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center hidden z-50 p-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-6 space-y-6 shadow-2xl text-center">
+            <div class="w-16 h-16 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center mx-auto text-2xl" id="modal-icon">
+                <i class="fa-solid fa-microphone"></i>
+            </div>
+            
+            <div class="space-y-2">
+                <h3 class="text-xl font-bold text-white" id="modal-title">Interactive Voice Enrollment</h3>
+                <p class="text-sm text-slate-400" id="modal-desc">Speak your safe-word clearly when the recording prompt activates.</p>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="w-full bg-slate-900 rounded-full h-3 overflow-hidden border border-slate-700">
+                <div id="modal-progress" class="bg-blue-500 h-full transition-all duration-300 w-0"></div>
+            </div>
+
+            <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-700/50">
+                <span class="text-2xl font-bold font-mono tracking-widest text-emerald-400" id="modal-status">Ready</span>
+            </div>
+
+            <button id="modal-btn" onclick="executeEnrollmentPasses()" class="w-full bg-blue-600 hover:bg-blue-500 py-3 rounded-xl font-semibold transition text-sm">
+                Start Enrollment (4 Takes)
             </button>
         </div>
     </div>
@@ -214,8 +252,49 @@ HTML_TEMPLATE = """
             loadData();
         }
 
-        function triggerEnrollment() {
-            alert('To re-enroll your voice profile with high audio fidelity, please run: python enroll.py in your terminal!');
+        // --- Interactive Web Enrollment ---
+        function startWebEnrollment() {
+            document.getElementById('enroll-modal').classList.remove('hidden');
+            document.getElementById('modal-status').innerText = 'Ready';
+            document.getElementById('modal-progress').style.width = '0%';
+            document.getElementById('modal-btn').style.display = 'block';
+        }
+
+        async function executeEnrollmentPasses() {
+            const btn = document.getElementById('modal-btn');
+            const status = document.getElementById('modal-status');
+            const prog = document.getElementById('modal-progress');
+            btn.style.display = 'none';
+
+            for (let pass = 1; pass <= 4; pass++) {
+                // Countdown
+                for (let c = 3; c >= 1; c--) {
+                    status.innerText = `Pass ${pass}/4: In ${c}...`;
+                    status.className = "text-2xl font-bold font-mono text-yellow-400";
+                    await new Promise(r => setTimeout(r, 600));
+                }
+
+                status.innerText = `● RECORDING PASS ${pass}/4`;
+                status.className = "text-2xl font-bold font-mono text-red-500 animate-pulse";
+
+                // Trigger backend capture
+                const res = await fetch(`/api/enroll-pass?pass_num=${pass}`);
+                const data = await res.json();
+                
+                if (!data.success) {
+                    alert('Error: ' + data.error);
+                    document.getElementById('enroll-modal').classList.add('hidden');
+                    return;
+                }
+
+                prog.style.width = `${pass * 25}%`;
+            }
+
+            status.innerText = "✓ PROCESSED & SAVED!";
+            status.className = "text-2xl font-bold font-mono text-emerald-400";
+            await new Promise(r => setTimeout(r, 1200));
+            document.getElementById('enroll-modal').classList.add('hidden');
+            loadData();
         }
 
         loadData();
@@ -223,6 +302,12 @@ HTML_TEMPLATE = """
 </body>
 </html>
 """
+
+# Global storage for passes during active web enrollment
+enroll_session = {
+    "embeddings": [],
+    "specs": []
+}
 
 @app.get("/", response_class=HTMLResponse)
 def serve_ui():
@@ -253,7 +338,55 @@ def delete_profile():
         os.remove(config.METRICS_PATH)
     return {"status": "deleted"}
 
+@app.get("/api/enroll-pass")
+def record_enroll_pass(pass_num: int):
+    """Captures 2.5 seconds of audio via laptop microphone, extracts embedding & spectrogram."""
+    global enroll_session
+    if pass_num == 1:
+        enroll_session["embeddings"] = []
+        enroll_session["specs"] = []
 
+    try:
+        # Record from laptop mic
+        audio = sd.rec(
+            int(config.RECORDING_DURATION * config.SAMPLE_RATE),
+            samplerate=config.SAMPLE_RATE,
+            channels=config.CHANNELS,
+            dtype=config.DTYPE
+        )
+        sd.wait()
+        raw = audio.flatten()
+        trimmed = trim_silence_energy(raw)
+
+        if len(trimmed) < config.SAMPLE_RATE * 0.3:
+            return {"success": False, "error": "Spoken phrase too quiet or short."}
+
+        # 1. Neural Embedding
+        encoder = get_encoder()
+        tensor_audio = torch.from_numpy(trimmed).unsqueeze(0)
+        with torch.no_grad():
+            emb = encoder.encode_batch(tensor_audio).squeeze().cpu().numpy()
+        enroll_session["embeddings"].append(unit_normalize(emb))
+
+        # 2. Phonetic Spectrogram
+        spec = extract_mel_spectrogram(trimmed)
+        enroll_session["specs"].append(spec)
+
+        # On the 4th pass: save the profile
+        if pass_num == 4:
+            # Save Centroid
+            centroid = unit_normalize(np.mean(np.array(enroll_session["embeddings"]), axis=0))
+            np.save(config.CENTROID_PATH, centroid)
+
+            # Save Spectrogram Template
+            min_width = min(s.shape[1] for s in enroll_session["specs"])
+            aligned_specs = [s[:, :min_width] for s in enroll_session["specs"]]
+            avg_spec = np.mean(aligned_specs, axis=0)
+            np.save(config.SPEC_PATH, avg_spec)
+
+        return {"success": True, "pass": pass_num}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run("web_server:app", host="127.0.0.1", port=8000, reload=True)

@@ -28,12 +28,12 @@ EMBEDDING_SAVEDIR = str(ROOT_DIR / "pretrained_models/spkrec-ecapa-voxceleb")
 
 # Default Configuration Template
 DEFAULT_SETTINGS = {
-    "telegram_bot_token": "8896966256:AAFdRWGKC9BzOdR0tcIIngiK_0e9uSanmSo",
+    "telegram_bot_token": "YOUR_TELEGRAM_BOT_TOKEN_HERE",  # <-- Replace real token with placeholder
     "contacts": [
-        {"name": "Primary Guardian", "chat_id": "8337386648", "enabled": True}
+        {"name": "Primary Guardian", "chat_id": "YOUR_CHAT_ID_HERE", "enabled": True}
     ],
-    "tracking_interval_sec": 15,     # Send GPS ping every 15s when moving
-    "min_movement_threshold_m": 25.0,# Only update if moved > 25 meters
+    "tracking_interval_sec": 15,
+    "min_movement_threshold_m": 25.0,
     "neural_threshold": 0.65,
     "phonetic_threshold": 0.42
 }

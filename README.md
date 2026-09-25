@@ -9,30 +9,46 @@ Traditional Personal Emergency Response Systems (PERS) rely on tactile triggers 
 
 ## System Architecture
 
-```mermaid
-graph TD
-    A[Ambient Mic Audio @ 16 kHz Mono] --> B[VAD & Energy Noise Gate]
-    
-    B -->|Energy < 0.02| C[Drop Frame / Standby]
-    B -->|Active Speech / Surge| D{Dual Evaluation Engine}
-    
-    D --> E[Safe-Word Biometric Match<br/>192-D ECAPA-TDNN]
-    D --> F[Phonetic Template Match<br/>2D Log-Mel Cross-Correlation]
-    D --> G[Acoustic Distress Detector<br/>Pitch F0 > 450Hz & Spectral Centroid]
-    
-    E & F -->|Both Thresholds Passed| H[Acoustic Trigger Event]
-    G -->|Distress Confirmed| H
-    
-    H --> I[10-Second Fail-Safe Countdown]
-    I -->|User Hits ENTER| J[Alarm Aborted & Reset]
-    
-    I -->|Timeout Expired| K[Adaptive Emergency Dispatch]
-    K --> L[Save 5.0s Pre/Post Audio Proof]
-    K --> M[High-Precision CoreLocation Triangulation]
-    K --> N[Broadcast Alert & Map Link to Guardians]
-    
-    N --> O[Dynamic Movement Tracking]
-    O -->|Displacement > 25m| P[Send Live Relocation Update Ping]
+```text
++------------------------------------------+
+|  Ambient Microphone Audio @ 16 kHz Mono  |
++------------------------------------------+
+                     |
+                     v
+       +----------------------------+
+       | Audio Ingestion & VAD Gate |
+       +----------------------------+
+         | (RMS < 0.02)      | (Active Speech / Surge)
+         v                   v
+     [Standby]       +------------------------------------+
+                     |       Dual-Detection Barrier       |
+                     |------------------------------------|
+                     | 1. Safe-Word Engine:               |
+                     |    * 192-D ECAPA-TDNN Centroid     |
+                     |    * 2D Log-Mel Template Match     |
+                     |                                    |
+                     | 2. Distress / Scream Detector:     |
+                     |    * Pitch F0 > 450 Hz             |
+                     |    * Spectral Centroid > 2200 Hz   |
+                     +------------------------------------+
+                                     |
+                             (Trigger Confirmed)
+                                     v
+                  +--------------------------------------+
+                  | 10-Second Non-Blocking Abort Window  |
+                  | Audible chime + Terminal countdown   |
+                  +--------------------------------------+
+                     | (User hits Enter)      | (Timeout)
+                     v                        v
+              [Alarm Aborted]    +--------------------------------+
+                                 |  Emergency Dispatch Execution  |
+                                 |--------------------------------|
+                                 | * 5.0s Pre/Post Audio Proof    |
+                                 | * CoreLocation Triangulation   |
+                                 | * Multi-Guardian Broadcast     |
+                                 | * Dynamic Haversine Tracking   |
+                                 |   (Pings if distance > 25m)    |
+                                 +--------------------------------+
 
 Core Capabilities
 

@@ -9,50 +9,80 @@ Traditional Personal Emergency Response Systems (PERS) rely on tactile triggers 
 
 ## System Architecture
 
-[ Ambient Microphone Audio @ 16 kHz Mono ] │ ▼ [ Audio Ingestion & VAD Gate ] │
-(Energy < 0.02 ──► Drop / Sleep) ▼ (Active Speech / Surge)
-┌──────────────┴──────────────┐ ▼ ▼
-[ Two-Factor Safe-Word Engine ] [ Acoustic Distress Detector ] •
-Biometric: 192-D ECAPA-TDNN • Autocorrelation Pitch (F0 > 450 Hz) • Phonetic: 2D
-Log-Mel Template • Spectral Centroid (> 2200 Hz) └──────────────┬──────────────┘
-│ (Trigger Event) ▼ [ Non-Blocking 10s Fail-Safe Engine ] • Audible Warning &
-Visual Terminal Countdown • Single-Key Asynchronous Abort ([ENTER]) │
-(Uncancelled / Timeout) ▼ [ Adaptive Emergency Dispatch Mesh ] • 5.0s Incident
-Audio Snapshot (.wav) • High-Precision Coordinate Triangulation (Apple
-CoreLocation / Wi-Fi) • Multi-Recipient Telegram Broadcast • Dynamic Movement
-Tracking (Haversine Distance > 25m Pings)
+```mermaid
+graph TD
+    A[Ambient Mic Audio @ 16 kHz Mono] --> B[VAD & Energy Noise Gate]
+    
+    B -->|Energy < 0.02| C[Drop Frame / Standby]
+    B -->|Active Speech / Surge| D{Dual Evaluation Engine}
+    
+    D --> E[Safe-Word Biometric Match<br/>192-D ECAPA-TDNN]
+    D --> F[Phonetic Template Match<br/>2D Log-Mel Cross-Correlation]
+    D --> G[Acoustic Distress Detector<br/>Pitch F0 > 450Hz & Spectral Centroid]
+    
+    E & F -->|Both Thresholds Passed| H[Acoustic Trigger Event]
+    G -->|Distress Confirmed| H
+    
+    H --> I[10-Second Fail-Safe Countdown]
+    I -->|User Hits ENTER| J[Alarm Aborted & Reset]
+    
+    I -->|Timeout Expired| K[Adaptive Emergency Dispatch]
+    K --> L[Save 5.0s Pre/Post Audio Proof]
+    K --> M[High-Precision CoreLocation Triangulation]
+    K --> N[Broadcast Alert & Map Link to Guardians]
+    
+    N --> O[Dynamic Movement Tracking]
+    O -->|Displacement > 25m| P[Send Live Relocation Update Ping]
 
+Core Capabilities
 
----
+1. Two-Factor Safe-Word Spotting (Zero-Retraining KWS)
 
-## Core Capabilities
+Standard keyword spotters require thousands of samples to train acoustic models.
+This system enables arbitrary custom phrases in four enrollment passes using a
+dual-verification barrier:
 
-### 1. Two-Factor Safe-Word Spotting (Zero-Retraining KWS)
-Standard keyword spotters require thousands of samples to train acoustic models. This system enables arbitrary custom phrases in four enrollment passes using a dual-verification barrier:
-- **Biometric Layer:** An ECAPA-TDNN (Emphasized Channel Attention, Propagation and Aggregation Time-Delay Neural Network) backbone extracts a 192-dimensional unit-normalized speaker vector to verify the user's vocal tract geometry.
-- **Phonetic Layer:** A 40-band Log-Mel Filterbank spectrogram template captures syllable cadence via 2D Pearson Cross-Correlation, ensuring the phrase cannot be falsely triggered by conversational speech from the same user.
+  - Biometric Layer: An ECAPA-TDNN (Emphasized Channel Attention, Propagation
+    and Aggregation Time-Delay Neural Network) backbone extracts
+    a 192-dimensional unit-normalized speaker vector to verify the user's vocal
+    tract geometry.
+  - Phonetic Layer: A 40-band Log-Mel Filterbank spectrogram template captures
+    syllable cadence via 2D Pearson Cross-Correlation, ensuring the phrase
+    cannot be falsely triggered by conversational speech from the same user.
 
-### 2. Heuristic Distress & Scream Detection
-Operates independently of linguistic content to capture physiological panic acoustics:
-- **Fundamental Frequency ($F_0$):** Spikes above normal speech registers ($450\text{ Hz} - 1100\text{ Hz}$) via autocorrelation.
-- **Spectral Centroid:** Tracks high-frequency energy shifts above $2200\text{ Hz}$.
-- **Spectral Flatness (Wiener Entropy):** Detects turbulent, chaotic vocal fold breakdown ($> 0.15$).
+2. Heuristic Distress & Scream Detection
 
-### 3. Fail-Safe Verification Window
-Every acoustic trigger initiates an asynchronous 10-second cancel countdown. Users can cancel false positives by pressing `[ENTER]`. If uncancelled, the incident is confirmed and live dispatch begins.
+Operates independently of linguistic content to capture physiological panic
+acoustics:
 
-### 4. Dynamic Breadcrumb Relocation Tracking
+  - Fundamental Frequency (F_0): Spikes above normal speech registers
+    (450\text{ Hz} - 1100\text{ Hz}) via autocorrelation.
+  - Spectral Centroid: Tracks high-frequency energy shifts above 2200\text{ Hz}.
+  - Spectral Flatness (Wiener Entropy): Detects turbulent, chaotic vocal fold
+    breakdown (> 0.15).
+
+3. Fail-Safe Verification Window
+
+Every acoustic trigger initiates an asynchronous 10-second cancel countdown.
+Users can cancel false positives by pressing [ENTER]. If uncancelled, the
+incident is confirmed and live dispatch begins.
+
+4. Dynamic Breadcrumb Relocation Tracking
+
 Instead of sending a single static GPS coordinate:
-- Captures a rolling 5.0-second `.wav` file ($2.5\text{s}$ pre-trigger $+ 2.5\text{s}$ post-trigger).
-- Pulls high-precision coordinates using native macOS CoreLocation (Wi-Fi BSSID triangulation).
-- Broadcasts the incident package to all configured guardians via the Telegram Bot API.
-- A background tracking thread calculates the Haversine geodesic displacement ($\Delta d$). If the victim is moved more than $25\text{ meters}$ (e.g., inside a vehicle), updated pins and routing links are dispatched automatically.
 
----
+  - Captures a rolling 5.0-second .wav file (2.5\text{s} pre-trigger
+    \+ 2.5\text{s} post-trigger).
+  - Pulls high-precision coordinates using native macOS CoreLocation (Wi-Fi
+    BSSID triangulation).
+  - Broadcasts the incident package to all configured guardians via the Telegram
+    Bot API.
+  - A background tracking thread calculates the Haversine geodesic displacement
+    (\Delta d). If the victim is moved more than 25\text{ meters} (e.g., inside
+    a vehicle), updated pins and routing links are dispatched automatically.
 
-## Project Structure
+Project Structure
 
-```text
 sentinel_mark1/
 ├── config.py                 # Central configurations, paths, and model hyperparameters
 ├── dispatcher.py             # Telegram broadcasting, CoreLocation & Haversine tracking

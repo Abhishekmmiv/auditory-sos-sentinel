@@ -186,7 +186,7 @@ python live_sentinel.py
 The Sentinel will calibrate against the ambient noise floor and begin live
 acoustic monitoring.
 
-Hardware Migration Roadmap (Major Project Phase)
+Hardware Migration Roadmap (Major Project Phase):-
 
 The current Python implementation serves as the architectural reference model
 for an ultra-low-power wearable implementation planned for the next engineering
